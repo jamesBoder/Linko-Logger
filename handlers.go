@@ -22,6 +22,7 @@ var (
 	redirects   []string
 )
 
+
 //go:embed index.html
 var indexPage string
 
@@ -45,13 +46,13 @@ func (s *server) handlerShortenLink(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing url parameter", http.StatusBadRequest)
 		return
 	}
-	logger.Println("Shortening URL:", longURL)
+	s.logger.Println("Shortening URL:", longURL)
 	u, err := url.Parse(longURL)
 	if err != nil || u.Scheme == "" || u.Host == "" {
 		http.Error(w, "invalid URL: must include scheme (http/https) and host", http.StatusBadRequest)
 		return
 	}
-	logger.Printf("Parsed URL: scheme=%s, host=%s\n", u.Scheme, u.Host)
+	s.logger.Printf("Parsed URL: scheme=%s, host=%s\n", u.Scheme, u.Host)
 	if err := checkDestination(longURL); err != nil {
 		http.Error(w, fmt.Sprintf("invalid target URL: %v", err), http.StatusBadRequest)
 		return
@@ -61,7 +62,7 @@ func (s *server) handlerShortenLink(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to shorten URL", http.StatusInternalServerError)
 		return
 	}
-	logger.Printf("Generated short code: %s for URL: %s\n", shortCode, longURL)
+	s.logger.Printf("Generated short code: %s for URL: %s\n", shortCode, longURL)
 	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(http.StatusCreated)
 	io.WriteString(w, shortCode)

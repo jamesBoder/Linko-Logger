@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"log"
 )
 
 type ShortURL struct {
@@ -28,14 +29,16 @@ const (
 
 type Store struct {
 	dir string
+	logger *log.Logger
 }
 
-func New(dir string) (*Store, error) {
+func New(dir string, logger *log.Logger) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
 	return &Store{
 		dir: dir,
+		logger: logger,
 	}, nil
 }
 
