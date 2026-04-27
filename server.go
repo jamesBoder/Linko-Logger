@@ -23,8 +23,17 @@ func requestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			next.ServeHTTP(w, r)
-			logger.Info(fmt.Sprintf("%s %s %s", r.RemoteAddr, r.Method, r.URL.Path))
-		})
+			// In your request logging middleware, replace the raw string log with structured key/value pairs:
+			// Message: "Served request"
+			// method: HTTP method of the request
+			// path: URL path of the request
+			//client_ip: Remote IP address of the request
+			logger.Info("Served request",
+				slog.String("method", r.Method),
+				slog.String("path", r.URL.Path),
+				slog.String("client_ip", r.RemoteAddr),
+			)
+		})	
 	}
 }
 
@@ -60,8 +69,10 @@ func (s *server) start() error {
 	if err != nil {
 		return err
 	}
-	// print server is running
-	s.logger.Info(fmt.Sprintf("Linko is running on http://localhost:%d", ln.Addr().(*net.TCPAddr).Port))
+	// print server is running. 
+	s.logger.Info("Linko is running", 
+    "port", ln.Addr().(*net.TCPAddr).Port,
+	)
 
 	if err := s.httpServer.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
 		return err
