@@ -40,9 +40,21 @@
         color: #000;
         border: none;
         font-weight: bold;
+        font-family: "Courier New", monospace;
       }
       button:hover {
         background-color: #0a0;
+      }
+      button.copy-btn {
+        padding: 2px 8px;
+        font-size: 0.75em;
+        background-color: #111;
+        color: #0f0;
+        border: 1px solid #0f0;
+      }
+      button.copy-btn:hover {
+        background-color: #0f0;
+        color: #000;
       }
       a {
         color: #0f0;
@@ -62,6 +74,29 @@
         color: #f00;
         margin-top: 8px;
       }
+      #result-box {
+        display: none;
+        margin-top: 12px;
+        border: 1px solid #0f0;
+        padding: 10px;
+        background-color: #001100;
+      }
+      #result-box .label {
+        color: #0a0;
+        font-size: 0.8em;
+        text-transform: uppercase;
+        margin-bottom: 4px;
+      }
+      #result-box .result-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      #result-url {
+        color: #0f0;
+        font-weight: bold;
+        word-break: break-all;
+      }
       #stats-box {
         margin-bottom: 20px;
         border: 1px solid #0f0;
@@ -80,9 +115,18 @@
         font-size: 0.9em;
       }
       #urls {
+        display: none;
         margin-top: 24px;
         border: 1px solid #0f0;
         padding: 10px;
+      }
+      #urls h2 {
+        margin: 0 0 10px 0;
+        font-size: 1em;
+        text-transform: uppercase;
+        border-bottom: 1px solid #0a0;
+        padding-bottom: 5px;
+        color: #0f0;
       }
       #urls table {
         border-collapse: collapse;
@@ -97,6 +141,19 @@
       #urls th {
         color: #0f0;
         text-transform: uppercase;
+      }
+      #urls td.long-url {
+        max-width: 280px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      footer {
+        margin-top: 40px;
+        border-top: 1px solid #0a0;
+        padding-top: 8px;
+        color: #0a0;
+        font-size: 0.75em;
       }
     </style>
   </head>
@@ -131,7 +188,7 @@
       <section id="shorten-section">
         <form onsubmit="shorten(event)">
           <input
-            type="text"
+            type="url"
             id="url"
             placeholder="https://example.com/long/url"
             size="40"
@@ -139,21 +196,33 @@
           <button type="submit">Shorten</button>
         </form>
         <div id="shorten-error" class="error"></div>
+        <div id="result-box">
+          <div class="label">Shortened URL</div>
+          <div class="result-row">
+            <a id="result-url" href="#" target="_blank"></a>
+            <button class="copy-btn" onclick="copyResult()">Copy</button>
+          </div>
+        </div>
       </section>
 
-      <section id="urls" style="display: none">
-        <h2>Shortened URLs</h2>
+      <section id="urls">
+        <h2>Shortened URLs (<span id="url-count">0</span>)</h2>
         <table>
           <thead>
             <tr>
               <th>Short Code</th>
               <th>Long URL</th>
+              <th></th>
             </tr>
           </thead>
           <tbody id="url-list"></tbody>
         </table>
       </section>
     </main>
+
+    <footer>
+      linko &mdash; file-based url shortener
+    </footer>
 
     <script>
       let authHeader = null;
@@ -173,6 +242,32 @@
         }
       }
 
+      function buildRow(shortCode, longURL) {
+        const shortURL = `${window.location.origin}/${shortCode}`;
+        const tr = document.createElement("tr");
+        const tdShort = document.createElement("td");
+        tdShort.innerHTML = `<a href="${shortURL}" target="_blank">${shortCode}</a>`;
+        const tdLong = document.createElement("td");
+        tdLong.className = "long-url";
+        tdLong.title = longURL;
+        tdLong.innerHTML = `<a href="${longURL}" target="_blank">${longURL}</a>`;
+        const tdCopy = document.createElement("td");
+        const btn = document.createElement("button");
+        btn.className = "copy-btn";
+        btn.textContent = "Copy";
+        btn.onclick = () => copyToClipboard(shortURL, btn);
+        tdCopy.appendChild(btn);
+        tr.appendChild(tdShort);
+        tr.appendChild(tdLong);
+        tr.appendChild(tdCopy);
+        return tr;
+      }
+
+      function updateCount() {
+        const count = document.getElementById("url-list").childElementCount;
+        document.getElementById("url-count").textContent = count;
+      }
+
       async function loadURLs() {
         if (!authHeader) return;
         try {
@@ -185,14 +280,10 @@
           const tbody = document.getElementById("url-list");
           tbody.innerHTML = "";
           data.forEach((entry) => {
-            const tr = document.createElement("tr");
-            const shortURL = `${window.location.origin}/${entry.short_code}`;
-            tr.innerHTML =
-              `<td><a href="${shortURL}" target="_blank">${entry.short_code}</a></td>` +
-              `<td><a href="${entry.long_url}" target="_blank">${entry.long_url}</a></td>`;
-            tbody.appendChild(tr);
+            tbody.appendChild(buildRow(entry.short_code, entry.long_url));
           });
           document.getElementById("urls").style.display = "block";
+          updateCount();
         } catch (err) {
           console.error("Failed to load URLs:", err);
         }
@@ -225,6 +316,7 @@
           document.getElementById("login-error").textContent = "";
 
           loadURLs();
+          loadStats();
         } catch (err) {
           document.getElementById("login-error").textContent = err.message;
         }
@@ -238,6 +330,7 @@
         document.getElementById("shorten-section").style.display = "none";
         document.getElementById("urls").style.display = "none";
         document.getElementById("stats-box").style.display = "none";
+        document.getElementById("result-box").style.display = "none";
         document.getElementById("url-list").innerHTML = "";
         document.getElementById("stats").textContent = "";
         document.getElementById("shorten-error").textContent = "";
@@ -267,12 +360,14 @@
 
           const code = await resp.text();
           const shortURL = `${window.location.origin}/${code}`;
-          const tbody = document.getElementById("url-list");
-          const tr = document.createElement("tr");
-          tr.innerHTML =
-            `<td><a href="${shortURL}" target="_blank">${code}</a></td>` +
-            `<td><a href="${url}" target="_blank">${url}</a></td>`;
 
+          const resultLink = document.getElementById("result-url");
+          resultLink.href = shortURL;
+          resultLink.textContent = shortURL;
+          document.getElementById("result-box").style.display = "block";
+
+          const tbody = document.getElementById("url-list");
+          const tr = buildRow(code, url);
           if (tbody.firstChild) {
             tbody.insertBefore(tr, tbody.firstChild);
           } else {
@@ -282,9 +377,24 @@
           document.getElementById("urls").style.display = "block";
           document.getElementById("url").value = "";
           document.getElementById("shorten-error").textContent = "";
+          updateCount();
         } catch (err) {
           document.getElementById("shorten-error").textContent = err.message;
         }
+      }
+
+      function copyToClipboard(text, btn) {
+        navigator.clipboard.writeText(text).then(() => {
+          const orig = btn.textContent;
+          btn.textContent = "Copied!";
+          setTimeout(() => (btn.textContent = orig), 1500);
+        });
+      }
+
+      function copyResult() {
+        const url = document.getElementById("result-url").href;
+        const btn = document.querySelector("#result-box .copy-btn");
+        copyToClipboard(url, btn);
       }
     </script>
   </body>
