@@ -10,12 +10,19 @@ import (
 	"time"
 	"errors"
 	"fmt"
-	"bufio"
+	"strings"
+	"slices"
+	"net/url"
 	"log/slog"
 	
 	pkgerr "github.com/pkg/errors"
+	"gopkg.in/natefinch/lumberjack.v2"
+	"github.com/mattn/go-isatty"
+	"github.com/lmittmann/tint"
 	"boot.dev/linko/internal/store"
 	"boot.dev/linko/internal/linkoerr"
+	"boot.dev/linko/internal/build"
+
 	
 )
 
@@ -55,8 +62,26 @@ func errorAttrs(err error) []slog.Attr {
 	return attrs
 }
 
-// update to detect multiple errors with multiError and extract stack traces from all errors in the chain
+// update to detect multiple errors with multiError and extract stack traces from all errors in the chain. Add a security filter to your replaceAttr function. If a log attribute's key matches a list of sensitive key names (e.g. password, key, apikey, secret, pin, creditcardno), replace its value with [REDACTED]. Use slices.Contains to check the key against your list.
 func replaceAttr(groups []string, a slog.Attr) slog.Attr {
+	var sensitiveKeys = []string{"password", "key", "apikey", "secret", "pin", "creditcardno", "user"}
+	// if the attribute key is in the list of sensitive keys, replace its value with [REDACTED]
+	if slices.Contains(sensitiveKeys, strings.ToLower(a.Key)) {
+		return slog.Any(a.Key, "[REDACTED]")
+	}
+
+	// Also check string values for URLs that contain embedded passwords (using url.Parse and URL.User), and redact the password portion if present.
+	if a.Value.Kind() == slog.KindString {
+		strVal := a.Value.String() 
+		if u, err := url.Parse(strVal); err == nil && u.User != nil {
+			if _, hasPassword := u.User.Password(); hasPassword {
+				u.User = url.UserPassword(u.User.Username(), "[REDACTED]")
+				return slog.Any(a.Key, u.String())
+			}
+		}
+	}
+		
+
     if a.Key == "error" {
         err, ok := a.Value.Any().(error)
         if !ok {
@@ -79,37 +104,47 @@ func replaceAttr(groups []string, a slog.Attr) slog.Attr {
 				
 
 func initializeLogger(logfile string) (*slog.Logger, closeFunc, error) {
-	debugHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{ReplaceAttr: replaceAttr, Level: slog.LevelDebug})
 
-	
+	// Set the NoColor option on tint.NewHandler to true if you're not in a tty environment. Use both isatty.IsCygwinTerminal and isatty.IsTerminal, and enable color if either returns true.
+	debugHandler := tint.NewHandler(os.Stderr, &tint.Options{
+		Level: slog.LevelDebug,
+		ReplaceAttr: replaceAttr,
+		NoColor: !(isatty.IsTerminal(os.Stderr.Fd()) || isatty.IsCygwinTerminal(os.Stderr.Fd())),
+	})
+
 
 	if logfile == "" {
 		return slog.New(debugHandler), func() error { return nil }, nil
 	}
 
-	f, err := os.OpenFile(logfile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return nil, nil , err
+	// use lumberjack.logger to create a rolling log file
+	f := &lumberjack.Logger{
+		Filename:   logfile,
+		MaxSize:    1, // megabytes
+		MaxAge:     28,   //days
+		MaxBackups: 10,
+		LocalTime: false,
+		Compress:   true, // disabled by default
 	}
- 
-	bufferedFile := bufio.NewWriterSize(f, 8192) // 8KB buffer
 
-	infoHandler := slog.NewJSONHandler(bufferedFile, &slog.HandlerOptions{ReplaceAttr: replaceAttr, Level: slog.LevelInfo})
+	infoHandler := slog.NewJSONHandler(f, &slog.HandlerOptions{ReplaceAttr: replaceAttr, Level: slog.LevelInfo})
 
 	logger := slog.New(slog.NewMultiHandler(debugHandler, infoHandler))
 
 
 
-	//  define a function that calls bufferedFile.Flush() and f.Close(), then return that function.
+	//  update closeFunc to use logger.close() on the lumberjack logger
 	closeFunc := func() error {
-		if err := bufferedFile.Flush(); err != nil {
-			return err
+		if err := f.Close(); err != nil {
+			return pkgerr.WithStack(err)
 		}
-		return f.Close()
+		return nil
 	}
 
 	return logger, closeFunc, nil
 }
+
+
 
 
 func main() {
@@ -135,6 +170,15 @@ func run(ctx context.Context, cancel context.CancelFunc, httpPort int, dataDir s
 		return 1
 	}
 
+	env := os.Getenv("ENV")
+	hostname, _ := os.Hostname()
+
+	logger = logger.With(
+		slog.String("git_sha", build.GitSHA),
+		slog.String("build_time", build.BuildTime),
+		slog.String("env", env),
+		slog.String("hostname", hostname),
+	)
 	
 
 	st, err := store.New(dataDir, logger)
