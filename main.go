@@ -14,6 +14,11 @@ import (
 	"slices"
 	"net/url"
 	"log/slog"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	
 	pkgerr "github.com/pkg/errors"
 	"gopkg.in/natefinch/lumberjack.v2"
@@ -26,6 +31,8 @@ import (
 	
 )
 
+// init package level tracer
+var tracer trace.Tracer
 
 
 // create closeFunc type that is a function that returns an error
@@ -101,6 +108,24 @@ func replaceAttr(groups []string, a slog.Attr) slog.Attr {
     }
     return a
 }
+
+func initTracing(ctx context.Context) (func(context.Context) error, error) {
+	exp, err := otlptracegrpc.New(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	tp := sdktrace.NewTracerProvider(
+		sdktrace.WithBatcher(exp,
+			sdktrace.WithBatchTimeout(2*time.Second),
+		),
+		sdktrace.WithResource(resource.Default()),
+	)
+
+	otel.SetTracerProvider(tp)
+	tracer = tp.Tracer("boot.dev/linko")
+	return tp.Shutdown, nil
+}
 				
 
 func initializeLogger(logfile string) (*slog.Logger, closeFunc, error) {
@@ -161,6 +186,19 @@ func main() {
 }
 
 func run(ctx context.Context, cancel context.CancelFunc, httpPort int, dataDir string) int {
+
+	// initialize OpenTelemetry tracing and defer shutdown. use context.Background() for the shutdown context
+	shutdownTracing, err := initTracing(ctx)
+	if err != nil {
+		fmt.Printf("failed to initialize tracing: %v\n", err)
+		return 1
+	}
+	defer func() {
+		if err := shutdownTracing(context.Background()); err != nil {
+			fmt.Printf("failed to shutdown tracing: %v\n", err)
+		}
+	}()
+	
 
 	// create a single logger that uses initializeLogger to write to both stderr and a file. the log file path should come from the LINKO_LOG_FILE environment variable. if the environment variable is not set, the logger should just write to stderr.
 	logFile := os.Getenv("LINKO_LOG_FILE")

@@ -13,9 +13,12 @@ import (
 	"strings"
 	"crypto/rand"
 	"strconv"
+	"net/http/pprof"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	
 	
 	"boot.dev/linko/internal/store"
 )
@@ -209,12 +212,15 @@ func metricsMiddleware(next http.Handler) http.Handler {
 func newServer(store store.Store, port int, cancel context.CancelFunc, logger *slog.Logger) *server {
 	mux := http.NewServeMux()
 
+	h := otelhttp.NewHandler(mux, "http.server")
+	
+
 	srv := &http.Server{
 		Addr:    fmt.Sprintf(":%d", port),
-		Handler: metricsMiddleware(requestIDMiddleware(requestLogger(logger)(mux))),
+		Handler: metricsMiddleware(requestIDMiddleware(requestLogger(logger)(h))),
 		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout: 10 * time.Second,
-		WriteTimeout: 10 * time.Second,
+		ReadTimeout: 30 * time.Second,
+		WriteTimeout: 60 * time.Second,
 		IdleTimeout: 120 * time.Second,
 	}
 
@@ -234,6 +240,8 @@ func newServer(store store.Store, port int, cancel context.CancelFunc, logger *s
 	mux.HandleFunc("GET /{shortCode}", s.handlerRedirect)
 	mux.HandleFunc("POST /admin/shutdown", s.handlerShutdown)
 	mux.Handle("GET /metrics", promhttp.Handler())
+	mux.Handle("GET /debug/pprof/", s.authMiddleware(http.HandlerFunc(pprof.Index)))
+	mux.Handle("GET /debug/pprof/profile", s.authMiddleware(http.HandlerFunc(pprof.Profile)))
 
 	return s
 }
