@@ -4,9 +4,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"context"
 )
 
-func checkDestination(targetURL string) error {
+func checkDestination(ctx context.Context, targetURL string) error {
+	_ , span := tracer.Start(ctx, "http.verify_destination")
+    defer span.End()
+
 	resp, err := http.DefaultClient.Get(targetURL)
 	if err != nil {
 		return fmt.Errorf("destination unreachable: %w", err)
